@@ -2,8 +2,35 @@ import json
 import urllib.parse
 import uuid
 
+from datetime import time
+
 import requests
 from django.shortcuts import render
+
+from .variables import WELL_KNOWN_PATH, CLIENT_ID, CLIENT_SECRET, REDIRECT_URL, RESPONSE_TYPE, GRANT_TYPE, ACCESS_MANAGEMENT_BASE
+
+class OidcWellknown:
+    __well_known_uri: str
+    __cached_wellknown: dict[str, str] = None
+        
+    def __init__(self, well_known_uri) -> None:
+        self.__well_known_uri = well_known_uri
+
+    def __ensure_wellknown(self) -> None:
+        if self.__cached_wellknown == None:
+            self.__cached_wellknown = requests.get(self.__well_known_uri).json()
+        return self.__cached_wellknown
+
+    def get_auth_endpoint(self) -> str:
+        return self.__ensure_wellknown()["authorization_endpoint"]
+
+    def get_token_endpoint(self) -> str:
+        return self.__ensure_wellknown()["token_endpoint"]
+    
+    def get_userinfo_endpoint(self) -> str:
+        return self.__ensure_wellknown()["userinfo_endpoint"]
+
+__well_known = OidcWellknown(ACCESS_MANAGEMENT_BASE + WELL_KNOWN_PATH)
 
 ###
 # Variabler kan hentes fra variables.py med
@@ -17,10 +44,18 @@ from django.shortcuts import render
 # For at OIDC tjenesten skal kunne håndtere forespørselen så må visse parametre legges til en url før brukeren videresendes.
 # Det første dere må gjøre er å finne data-en dere trenger for å bygge opp denne url-en.
 ###
+    
 def create_oidc_session(request):
+    url = __well_known.get_auth_endpoint()
 
-    url = ""
-    params = {}
+    params = {
+        "client_id": CLIENT_ID,
+        "grant_type": GRANT_TYPE,
+        "response_type": RESPONSE_TYPE,
+        "state": str(uuid.uuid4()),
+        "scope": "openid email",
+        "redirect_uri": REDIRECT_URL
+    }
 
     redirect_url = url + '?' + urllib.parse.urlencode(params)
 
@@ -36,10 +71,13 @@ def create_oidc_session(request):
 ###
 def get_access_token(request):
     authorization_code = request.GET['code']
-
-    url = ""
-    body = {}
-    basic_auth = ""
+    url = __well_known.get_token_endpoint()
+    body = {
+        "grant_type": GRANT_TYPE,
+        "code": authorization_code,
+        "redirect_uri": REDIRECT_URL
+    }
+    basic_auth = CLIENT_ID, CLIENT_SECRET
 
     response = requests.post(url, data=body, auth=basic_auth)
     formatted_json = prettify_body_if_json(response)
@@ -59,9 +97,10 @@ def get_access_token(request):
 ###
 def get_userinfo(request):
     access_token = request.GET['access_token']
-
-    url = ""
-    headers = {}
+    url = __well_known.get_userinfo_endpoint()
+    headers = {
+        'Authorization': 'Bearer ' + access_token
+    }
 
     response = requests.get(url, headers=headers)
     formatted_json = prettify_body_if_json(response)
